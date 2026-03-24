@@ -92,6 +92,19 @@ python neurons/miner.py \
   --blacklist.allowed_validator_hotkeys <validator_hotkey_1> <validator_hotkey_2>
 ```
 
+Operational note:
+
+- on first start, the miner trains a local cached classifier from the bundled
+  public human corpus plus generated bot windows;
+- later starts reuse the cached model unless `POKER44_MINER_FORCE_RETRAIN=1`.
+
+Useful miner tuning env vars:
+
+- `POKER44_MINER_TRAIN_WINDOWS` (default `6`)
+- `POKER44_MINER_VALIDATION_WINDOWS` (default `2`)
+- `POKER44_MINER_FORCE_RETRAIN` (default `0`)
+- `POKER44_MINER_MODEL_CACHE_DIR` (optional cache location override)
+
 ---
 
 ## Request/Response Contract
@@ -159,6 +172,12 @@ Output:
 `hands_generator/bot_hands/bot_hands.json`
 
 Validators evaluate with private human data (`POKER44_HUMAN_JSON_PATH`), not with the public training corpus.
+
+Local benchmark:
+
+```bash
+python scripts/miner/evaluate_miner.py --windows 3
+```
 
 ---
 
