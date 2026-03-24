@@ -19,9 +19,10 @@ git clone https://github.com/Poker44/Poker44-subnet
 cd Poker44-subnet
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-pip install bittensor-cli
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+python -m pip install --no-build-isolation -e .
+python -m pip install bittensor-cli
 ```
 
 Or use the helper script:

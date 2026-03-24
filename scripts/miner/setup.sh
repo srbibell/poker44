@@ -62,7 +62,7 @@ install_python_reqs() {
 
 install_modules() {
   info_msg "Installing current package in editable mode..."
-  pip install -e . || handle_error "Failed to install current package"
+  pip install --no-build-isolation -e . || handle_error "Failed to install current package"
   success_msg "Main package installed."
 }
 

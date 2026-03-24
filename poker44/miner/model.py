@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 import pickle
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 import bittensor as bt
 import numpy as np
@@ -57,6 +58,13 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_startup_mode(value: str) -> Literal["blocking", "background"]:
+    normalized = value.strip().lower()
+    if normalized == "background":
+        return "background"
+    return "blocking"
+
+
 @dataclass(frozen=True)
 class MinerTrainingConfig:
     human_json_path: Path
@@ -72,6 +80,7 @@ class MinerTrainingConfig:
     bot_candidate_attempts_per_chunk: int = 4
     max_bot_generation_rounds: int = 2
     force_retrain: bool = False
+    startup_mode: Literal["blocking", "background"] = "blocking"
 
     @classmethod
     def from_env(cls, *, cache_dir: Path | None = None) -> "MinerTrainingConfig":
@@ -119,6 +128,9 @@ class MinerTrainingConfig:
                 _env_int("POKER44_MINER_MAX_BOT_GENERATION_ROUNDS", 2),
             ),
             force_retrain=_env_bool("POKER44_MINER_FORCE_RETRAIN", False),
+            startup_mode=_normalize_startup_mode(
+                os.getenv("POKER44_MINER_STARTUP_MODE", "blocking")
+            ),
         )
 
 
@@ -127,25 +139,56 @@ class MinerRiskModel:
 
     def __init__(self, *, cache_dir: Path | None = None):
         self.training_cfg = MinerTrainingConfig.from_env(cache_dir=cache_dir)
+        self._lock = threading.RLock()
+        self._training_thread: threading.Thread | None = None
+        self._is_training = False
         self.model: HistGradientBoostingClassifier | None = None
         self.threshold: float = 0.5
         self.metrics: dict[str, Any] = {}
         self.cache_path = self._cache_path_for_config(self.training_cfg)
-        self._load_or_train()
+        self._initialize_model()
+
+    @property
+    def model_ready(self) -> bool:
+        with self._lock:
+            return self.model is not None
+
+    @property
+    def training_in_progress(self) -> bool:
+        with self._lock:
+            return self._is_training
+
+    def status_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            metrics_status_default = "trained" if self.model is not None else "unknown"
+            return {
+                "startup_mode": self.training_cfg.startup_mode,
+                "model_ready": self.model is not None,
+                "training_in_progress": self._is_training,
+                "threshold": round(float(self.threshold), 6),
+                "cache_path": str(self.cache_path),
+                "metrics_status": str(
+                    self.metrics.get("status", metrics_status_default)
+                ),
+            }
 
     def score_chunks(self, chunks: Sequence[Sequence[dict]]) -> list[float]:
         if not chunks:
             return []
 
-        if self.model is None:
+        with self._lock:
+            model = self.model
+            threshold = self.threshold
+
+        if model is None:
             return [self.fallback_score_chunk(chunk) for chunk in chunks]
 
         try:
             feature_matrix = np.vstack(
                 [extract_chunk_features(chunk) for chunk in chunks]
             )
-            probabilities = self.model.predict_proba(feature_matrix)[:, 1]
-            adjusted = self._remap_scores(probabilities, self.threshold)
+            probabilities = model.predict_proba(feature_matrix)[:, 1]
+            adjusted = self._remap_scores(probabilities, threshold)
             return [round(float(score), 6) for score in adjusted]
         except Exception as err:
             bt.logging.warning(
@@ -157,31 +200,99 @@ class MinerRiskModel:
         scores = self.score_chunks([chunk])
         return scores[0] if scores else 0.5
 
-    def _load_or_train(self) -> None:
-        if not self.training_cfg.force_retrain and self.cache_path.exists():
-            try:
-                payload = pickle.loads(self.cache_path.read_bytes())
-                self.model = payload["model"]
-                self.threshold = float(payload["threshold"])
-                self.metrics = dict(payload.get("metrics") or {})
-                bt.logging.info(
-                    f"Loaded cached miner model from {self.cache_path} | threshold={self.threshold:.3f}"
-                )
-                return
-            except Exception as err:
-                bt.logging.warning(
-                    f"Failed to load cached miner model, retraining: {err}"
-                )
+    def _initialize_model(self) -> None:
+        if self.training_cfg.startup_mode == "background":
+            loaded = self._load_cached_model(ignore_force_retrain=True)
+            if self.training_cfg.force_retrain or not loaded:
+                self._start_background_training()
+            if not loaded:
+                with self._lock:
+                    self.metrics = {
+                        "status": "warming_up",
+                        "note": "serving fallback until training finishes",
+                    }
+            return
 
+        loaded = self._load_cached_model(ignore_force_retrain=False)
+        if loaded:
+            return
         try:
             self._train_and_cache()
         except Exception as err:
             bt.logging.warning(
-                f"Miner model training failed, keeping heuristic fallback only: {err}"
+                "Miner model training failed, "
+                f"keeping heuristic fallback only: {err}"
             )
-            self.model = None
-            self.threshold = 0.5
-            self.metrics = {"status": "fallback_only", "error": str(err)}
+            with self._lock:
+                self.model = None
+                self.threshold = 0.5
+                self.metrics = {"status": "fallback_only", "error": str(err)}
+
+    def _load_cached_model(self, *, ignore_force_retrain: bool) -> bool:
+        if self.training_cfg.force_retrain and not ignore_force_retrain:
+            return False
+        if not self.cache_path.exists():
+            return False
+
+        try:
+            payload = pickle.loads(self.cache_path.read_bytes())
+            loaded_model = payload["model"]
+            loaded_threshold = float(payload["threshold"])
+            loaded_metrics = dict(payload.get("metrics") or {})
+            loaded_metrics.setdefault("status", "trained")
+            with self._lock:
+                self.model = loaded_model
+                self.threshold = loaded_threshold
+                self.metrics = loaded_metrics
+            bt.logging.info(
+                "Loaded cached miner model from "
+                f"{self.cache_path} | threshold={loaded_threshold:.3f}"
+            )
+            return True
+        except Exception as err:
+            bt.logging.warning(
+                f"Failed to load cached miner model, retraining: {err}"
+            )
+            return False
+
+    def _start_background_training(self) -> None:
+        with self._lock:
+            if self._is_training:
+                return
+            self._is_training = True
+
+        self._training_thread = threading.Thread(
+            target=self._background_training_worker,
+            name="poker44-miner-trainer",
+            daemon=True,
+        )
+        self._training_thread.start()
+        bt.logging.info(
+            "Started background miner model training "
+            f"| cache={self.cache_path}"
+        )
+
+    def _background_training_worker(self) -> None:
+        try:
+            self._train_and_cache()
+        except Exception as err:
+            bt.logging.warning(
+                "Background miner model training failed, "
+                f"continuing with current scorer: {err}"
+            )
+            with self._lock:
+                if self.model is None:
+                    self.threshold = 0.5
+                    self.metrics = {"status": "fallback_only", "error": str(err)}
+                else:
+                    self.metrics = {
+                        **self.metrics,
+                        "status": "trained_with_refresh_error",
+                        "background_error": str(err),
+                    }
+        finally:
+            with self._lock:
+                self._is_training = False
 
     def _train_and_cache(self) -> None:
         if not self.training_cfg.human_json_path.exists():
@@ -219,7 +330,9 @@ class MinerRiskModel:
         validation_probs = model.predict_proba(validation_x)[:, 1]
         threshold, _ = self._select_threshold(validation_probs, validation_y)
 
-        train_scores = self._remap_scores(model.predict_proba(train_x)[:, 1], threshold)
+        train_scores = self._remap_scores(
+            model.predict_proba(train_x)[:, 1], threshold
+        )
         train_reward, train_metrics = reward(train_scores, train_y)
         validation_reward, validation_summary = reward(
             self._remap_scores(validation_probs, threshold),
@@ -232,6 +345,7 @@ class MinerRiskModel:
             "model": model,
             "threshold": threshold,
             "metrics": {
+                "status": "trained",
                 "feature_version": FEATURE_VERSION,
                 "train_reward": train_reward,
                 "train_metrics": train_metrics,
@@ -248,9 +362,10 @@ class MinerRiskModel:
         }
         self.cache_path.write_bytes(pickle.dumps(payload))
 
-        self.model = model
-        self.threshold = threshold
-        self.metrics = dict(payload["metrics"])
+        with self._lock:
+            self.model = model
+            self.threshold = threshold
+            self.metrics = dict(payload["metrics"])
         bt.logging.info(
             "Finished miner model training "
             f"| reward={validation_reward:.4f} threshold={threshold:.3f} "
@@ -326,6 +441,10 @@ class MinerRiskModel:
 
     @staticmethod
     def _cache_path_for_config(cfg: MinerTrainingConfig) -> Path:
+        cfg_fingerprint = asdict(cfg)
+        # Runtime toggles should not fragment the persisted model cache.
+        cfg_fingerprint.pop("force_retrain", None)
+        cfg_fingerprint.pop("startup_mode", None)
         human_stats = {
             "path": str(cfg.human_json_path.resolve()),
             "size": cfg.human_json_path.stat().st_size
@@ -336,7 +455,7 @@ class MinerRiskModel:
             else 0,
         }
         fingerprint_payload = {
-            **asdict(cfg),
+            **cfg_fingerprint,
             "human_json_path": str(cfg.human_json_path),
             "cache_dir": str(cfg.cache_dir),
             "feature_version": FEATURE_VERSION,

@@ -11,9 +11,10 @@ git clone https://github.com/Poker44/Poker44-subnet
 cd Poker44-subnet
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-pip install bittensor-cli
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+python -m pip install --no-build-isolation -e .
+python -m pip install bittensor-cli
 ```
 
 Or use the helper script:
@@ -71,6 +72,13 @@ ALLOWED_VALIDATOR_HOTKEYS="validator_hotkey_1 validator_hotkey_2" \
 ./scripts/miner/run/run_miner.sh
 ```
 
+Script defaults:
+
+- `POKER44_MINER_STARTUP_MODE=background` so the miner serves immediately
+  while model training warms up.
+- Set `POKER44_MINER_STARTUP_MODE=blocking` if you want to wait for full
+  local training before serving.
+
 PM2:
 
 ```bash
@@ -97,11 +105,14 @@ Operational note:
 - on first start, the miner trains a local cached classifier from the bundled
   public human corpus plus generated bot windows;
 - later starts reuse the cached model unless `POKER44_MINER_FORCE_RETRAIN=1`.
+- set `POKER44_MINER_STARTUP_MODE=background` to serve fallback scores
+  immediately while local training runs in the background.
 
 Useful miner tuning env vars:
 
 - `POKER44_MINER_TRAIN_WINDOWS` (default `6`)
 - `POKER44_MINER_VALIDATION_WINDOWS` (default `2`)
+- `POKER44_MINER_STARTUP_MODE` (`blocking` or `background`; model default is `blocking`, while `run_miner.sh` defaults to `background` unless overridden)
 - `POKER44_MINER_FORCE_RETRAIN` (default `0`)
 - `POKER44_MINER_MODEL_CACHE_DIR` (optional cache location override)
 

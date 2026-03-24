@@ -10,6 +10,8 @@ MINER_SCRIPT="${MINER_SCRIPT:-./neurons/miner.py}"
 PM2_NAME="${PM2_NAME:-poker44_miner}"  ##  name of Miner, as you wish
 AXON_PORT="${AXON_PORT:-8091}"
 ALLOWED_VALIDATOR_HOTKEYS="${ALLOWED_VALIDATOR_HOTKEYS:-}"
+POKER44_MINER_STARTUP_MODE="${POKER44_MINER_STARTUP_MODE:-background}"
+POKER44_MINER_FORCE_RETRAIN="${POKER44_MINER_FORCE_RETRAIN:-0}"
 
 if [ ! -f "$MINER_SCRIPT" ]; then
     echo "Error: Miner script not found at $MINER_SCRIPT"
@@ -24,6 +26,8 @@ fi
 pm2 delete $PM2_NAME 2>/dev/null || true
 
 export PYTHONPATH="$(pwd)"
+export POKER44_MINER_STARTUP_MODE
+export POKER44_MINER_FORCE_RETRAIN
 
 MINER_ARGS=(
   --netuid "$NETUID"
@@ -50,6 +54,7 @@ pm2 save
 echo "Miner started: $PM2_NAME"
 echo "View logs: pm2 logs $PM2_NAME"
 echo "Config: netuid=$NETUID network=$NETWORK wallet=$WALLET_NAME hotkey=$HOTKEY axon_port=$AXON_PORT"
+echo "Model startup: POKER44_MINER_STARTUP_MODE=$POKER44_MINER_STARTUP_MODE POKER44_MINER_FORCE_RETRAIN=$POKER44_MINER_FORCE_RETRAIN"
 if [ -n "$ALLOWED_VALIDATOR_HOTKEYS" ]; then
     echo "Access mode: validator allowlist"
 else

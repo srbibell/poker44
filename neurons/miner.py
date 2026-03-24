@@ -1,5 +1,6 @@
 """Poker44 miner with cached local training and heuristic fallback."""
 
+import os
 import time
 from pathlib import Path
 from typing import Tuple
@@ -22,12 +23,20 @@ class Miner(BaseMinerNeuron):
 
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
-        cache_dir = Path(self.config.neuron.full_path) / "miner_model"
+        cache_dir_env = os.getenv("POKER44_MINER_MODEL_CACHE_DIR", "").strip()
+        cache_dir = (
+            Path(cache_dir_env).expanduser()
+            if cache_dir_env
+            else Path(self.config.neuron.full_path) / "miner_model"
+        )
         self.risk_model = MinerRiskModel(cache_dir=cache_dir)
+        status = self.risk_model.status_snapshot()
         bt.logging.info(
             "Poker44 miner ready "
-            f"| threshold={self.risk_model.threshold:.3f} "
-            f"| cache={self.risk_model.cache_path}"
+            f"| startup_mode={status['startup_mode']} "
+            f"| model_ready={status['model_ready']} "
+            f"| threshold={status['threshold']:.3f} "
+            f"| cache={status['cache_path']}"
         )
 
     async def forward(self, synapse: DetectionSynapse) -> DetectionSynapse:
@@ -36,8 +45,11 @@ class Miner(BaseMinerNeuron):
         scores = self.risk_model.score_chunks(chunks)
         synapse.risk_scores = scores
         synapse.predictions = [s >= 0.5 for s in scores]
+        score_source = "model" if self.risk_model.model_ready else "fallback"
+        average_score = sum(scores) / len(scores) if scores else 0.0
         bt.logging.info(
-            f"Scored {len(chunks)} chunks | predictions={synapse.predictions}"
+            f"Scored {len(chunks)} chunks | source={score_source} "
+            f"| avg_score={average_score:.4f}"
         )
         return synapse
 
@@ -59,7 +71,12 @@ if __name__ == "__main__":
     with Miner() as miner:
         bt.logging.info("Poker44 miner running...")
         while True:
+            status = miner.risk_model.status_snapshot()
             bt.logging.info(
-                f"Miner UID: {miner.uid} | Incentive: {miner.metagraph.I[miner.uid]}"
+                f"Miner UID: {miner.uid} "
+                f"| Incentive: {miner.metagraph.I[miner.uid]} "
+                f"| model_ready={status['model_ready']} "
+                f"| training={status['training_in_progress']} "
+                f"| threshold={status['threshold']:.3f}"
             )
             time.sleep(5 * 60)
