@@ -1,4 +1,4 @@
-# Contributing to Bittensor Subnet Development
+# Contributing to Poker44 Subnet Development
 
 The following is a set of guidelines for contributing to the Bittensor ecosystem. These are **HIGHLY RECOMMENDED** guidelines, but not hard-and-fast rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
 
@@ -16,10 +16,30 @@ The following is a set of guidelines for contributing to the Bittensor ecosystem
 
 
 ## How Can I Contribute?
-TODO(developer): Define your desired contribution procedure.
+Use the following default process when contributing to Poker44:
+
+1. Start by reading the local contribution docs in this `contrib/` folder.
+2. If you are fixing a bug or proposing a feature, open a GitHub issue or
+   draft pull request first when the change is non-trivial.
+3. Branch from `staging` using the naming conventions in
+   [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md).
+4. Install the project locally and run the relevant checks from
+   [TESTING.md](./TESTING.md) before opening a PR.
+5. Keep the change focused. Avoid mixing feature work, refactoring, and
+   unrelated fixes in the same PR.
+6. Update documentation when behavior changes, especially miner or validator
+   runtime behavior.
+7. Open the PR against `staging`, respond to review comments promptly, and
+   keep the branch current with upstream changes.
 
 ## Communication Channels
-TODO(developer): Place your communication channels here
+Use these channels by default:
+
+- GitHub Issues for bugs, enhancement requests, and reproducible reports.
+- GitHub Pull Requests for implementation discussion and code review.
+- Draft pull requests when you want early design or implementation feedback.
+- Official project links in [README.md](../README.md) for broader project
+  context and public-facing updates.
 
 > Please follow the Bittensor Subnet [style guide](./STYLE.md) regardless of your contribution type. 
 
@@ -99,7 +119,7 @@ After you submit a pull request, it will be reviewed by the maintainers. They ma
 > Note: Be sure to merge the latest from "upstream" before making a pull request:
 
 ```bash
-git remote add upstream https://github.com/opentensor/bittensor.git # TODO(developer): replace with your repo URL
+git remote add upstream https://github.com/Poker44/Poker44-subnet.git
 git fetch upstream
 git merge upstream/<your-branch-name>
 git push origin <your-branch-name>

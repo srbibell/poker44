@@ -84,11 +84,15 @@ show_completion_info() {
   echo
   echo -e "\e[33m[INFO]\e[0m Virtual environment: $(pwd)/miner_env"
   echo -e "\e[33m[INFO]\e[0m To activate: source miner_env/bin/activate"
+  echo -e "\e[33m[INFO]\e[0m Contributor docs: contrib/CONTRIBUTING.md contrib/TESTING.md contrib/DEBUGGING.md"
   echo
   echo -e "\e[34m[NEXT STEPS]\e[0m"
   echo "1. Review scripts/miner/run/run_miner.sh and set wallet, hotkey, axon port, and allowlisted validators."
   echo "   source miner_env/bin/activate"
   echo "   ./scripts/miner/run/run_miner.sh"
+  echo "2. Run the contributor checks before opening a PR."
+  echo "   python -m unittest discover -s tests -p 'test_*.py'"
+  echo "   python scripts/miner/evaluate_miner.py --windows 1"
 }
 
 main() {

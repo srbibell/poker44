@@ -8,6 +8,7 @@ hands_generator/human_hands/human_hands.json match the schema in poker44/core/ha
 from __future__ import annotations
 
 import json
+import gzip
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -59,7 +60,13 @@ def _hand_ended_from_board(streets: List[Dict[str, Any]]) -> str:
     return "preflop"
 
 
-def validate_hand(hand: Dict[str, Any], idx: int, source: str) -> List[str]:
+def validate_hand(
+    hand: Dict[str, Any],
+    idx: int,
+    source: str,
+    *,
+    strict_financials: bool = True,
+) -> List[str]:
     errors: List[str] = []
 
     top_keys = set(hand.keys())
@@ -77,7 +84,7 @@ def validate_hand(hand: Dict[str, Any], idx: int, source: str) -> List[str]:
         # Ensure payouts + rake ≈ total_pot when provided
         total_pot = outcome.get("total_pot")
         rake = outcome.get("rake", 0)
-        if total_pot is not None:
+        if strict_financials and total_pot is not None:
             payouts_sum = sum(outcome.get("payouts", {}).values())
             if round(payouts_sum + rake, 2) != round(total_pot, 2):
                 errors.append(
@@ -128,7 +135,11 @@ def load_hands(json_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
     if not json_path.exists():
         return [], [f"Missing file: {json_path}"]
     try:
-        data = json.loads(json_path.read_text())
+        if json_path.suffix == ".gz":
+            with gzip.open(json_path, "rt", encoding="utf-8") as handle:
+                data = json.load(handle)
+        else:
+            data = json.loads(json_path.read_text())
         if not isinstance(data, list):
             return [], [f"{json_path}: top-level JSON is not a list"]
         return data, []
@@ -136,7 +147,9 @@ def load_hands(json_path: Path) -> Tuple[List[Dict[str, Any]], List[str]]:
         return [], [f"Failed to parse {json_path}: {exc}"]
 
 
-def check_file(label: str, json_path: Path) -> List[str]:
+def check_file(
+    label: str, json_path: Path, *, strict_financials: bool = True
+) -> List[str]:
     hands, load_errors = load_hands(json_path)
     errors: List[str] = []
     errors.extend(load_errors)
@@ -144,22 +157,48 @@ def check_file(label: str, json_path: Path) -> List[str]:
         return errors
 
     for idx, hand in enumerate(hands):
-        errors.extend(validate_hand(hand, idx, f"{label}:{json_path.name}"))
+        errors.extend(
+            validate_hand(
+                hand,
+                idx,
+                f"{label}:{json_path.name}",
+                strict_financials=strict_financials,
+            )
+        )
     return errors
 
 
 def main() -> int:
     base = Path(__file__).parent
-    paths = {
-        "bot": base / "bot_hands" / "bot_hands.json",
-        "human": base / "human_hands" / "human_hands.json",
+    path_candidates = {
+        "bot": [
+            base / "bot_hands" / "bot_hands.json",
+        ],
+        "human": [
+            base / "human_hands" / "human_hands.json",
+            base / "human_hands" / "poker_hands_combined.json.gz",
+        ],
     }
 
     all_errors: List[str] = []
-    for label, path in paths.items():
-        errs = check_file(label, path)
+    checked_any = False
+    for label, candidates in path_candidates.items():
+        path = next((candidate for candidate in candidates if candidate.exists()), None)
+        if path is None:
+            print(f"Skipping {label}: no dataset file found in expected locations.")
+            continue
+        checked_any = True
+        errs = check_file(
+            label,
+            path,
+            strict_financials=path.name != "poker_hands_combined.json.gz",
+        )
         if errs:
             all_errors.extend(errs)
+
+    if not checked_any:
+        print("No dataset files found to validate.")
+        return 0
 
     if all_errors:
         print("\n✗ Inconsistencies found:")

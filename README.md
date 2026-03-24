@@ -127,6 +127,19 @@ Validated starting profile for production-like operation:
 
 ---
 
+## Contributing
+
+Contributor-facing process and review docs live in [`contrib/`](contrib):
+
+- Contributing guide: [`contrib/CONTRIBUTING.md`](contrib/CONTRIBUTING.md)
+- Development workflow: [`contrib/DEVELOPMENT_WORKFLOW.md`](contrib/DEVELOPMENT_WORKFLOW.md)
+- Style guide: [`contrib/STYLE.md`](contrib/STYLE.md)
+- Testing guide: [`contrib/TESTING.md`](contrib/TESTING.md)
+- Debugging guide: [`contrib/DEBUGGING.md`](contrib/DEBUGGING.md)
+- Code review notes: [`contrib/CODE_REVIEW_DOCS.md`](contrib/CODE_REVIEW_DOCS.md)
+
+---
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

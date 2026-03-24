@@ -85,11 +85,15 @@ show_completion_info() {
   echo
   echo -e "\e[33m[INFO]\e[0m Virtual environment: $(pwd)/validator_env"
   echo -e "\e[33m[INFO]\e[0m To activate: source validator_env/bin/activate"
+  echo -e "\e[33m[INFO]\e[0m Contributor docs: contrib/CONTRIBUTING.md contrib/TESTING.md contrib/DEBUGGING.md"
   echo
   echo -e "\e[34m[NEXT STEPS]\e[0m"
   echo "1. Review scripts/validator/run/run_vali.sh and set wallet, hotkey, and private dataset path."
   echo "   source validator_env/bin/activate"
   echo "   ./scripts/validator/run/run_vali.sh"
+  echo "2. Run the contributor checks before opening a PR."
+  echo "   python -m unittest discover -s tests -p 'test_*.py'"
+  echo "   python hands_generator/consistency_checker.py"
 }
 
 main() {
