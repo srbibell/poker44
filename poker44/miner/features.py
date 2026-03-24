@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import Any, Dict, Iterable, Sequence
 
 import numpy as np
 
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2
 SANITIZED_BB = 0.02
 ACTION_TYPES: tuple[str, ...] = (
     "small_blind",
@@ -57,6 +58,26 @@ def _mean_std_min_max(values: Sequence[float]) -> list[float]:
     ]
 
 
+def _quantile(values: Sequence[float], q: float) -> float:
+    if not values:
+        return 0.0
+    arr = np.asarray(values, dtype=np.float32)
+    return float(np.quantile(arr, q))
+
+
+def _entropy_from_counts(counts: Sequence[int]) -> float:
+    total = float(sum(counts))
+    if total <= 0.0:
+        return 0.0
+    entropy = 0.0
+    for count in counts:
+        if count <= 0:
+            continue
+        p = float(count) / total
+        entropy -= p * math.log(max(p, 1e-12))
+    return float(entropy)
+
+
 def _normalize_action_type(action_type: Any) -> str:
     value = str(action_type or "").strip().lower()
     return value if value in ACTION_TYPES else "other"
@@ -85,6 +106,10 @@ def _per_hand_summary(hand: Dict[str, Any]) -> Dict[str, Any]:
     same_action_repeats = 0
     same_actor_repeats = 0
     street_switches = 0
+    action_run = 0
+    max_action_run = 0
+    actor_run = 0
+    max_actor_run = 0
 
     prev_action_type: str | None = None
     prev_actor_seat: int | None = None
@@ -106,8 +131,18 @@ def _per_hand_summary(hand: Dict[str, Any]) -> Dict[str, Any]:
 
         if prev_action_type is not None and action_type == prev_action_type:
             same_action_repeats += 1
+            action_run += 1
+        else:
+            action_run = 1
+        max_action_run = max(max_action_run, action_run)
+
         if prev_actor_seat is not None and actor_seat == prev_actor_seat:
             same_actor_repeats += 1
+            actor_run += 1
+        else:
+            actor_run = 1
+        max_actor_run = max(max_actor_run, actor_run)
+
         if prev_street is not None and street != prev_street:
             street_switches += 1
 
@@ -129,6 +164,10 @@ def _per_hand_summary(hand: Dict[str, Any]) -> Dict[str, Any]:
     )
     unique_actors = len({seat for seat in actor_seats if seat > 0})
     preflop_actions = sum(1 for street in action_streets if street == "preflop")
+    all_in_actions = sum(1 for action_type in action_types if action_type == "all_in")
+    action_type_counts = Counter(action_types)
+    actor_counts = Counter(seat for seat in actor_seats if seat > 0)
+    street_counts = Counter(action_streets)
 
     summary = {
         "player_count": player_count,
@@ -147,6 +186,8 @@ def _per_hand_summary(hand: Dict[str, Any]) -> Dict[str, Any]:
         "amount_mean_bb": float(np.mean(action_amounts_bb)) if action_amounts_bb else 0.0,
         "amount_std_bb": float(np.std(action_amounts_bb)) if action_amounts_bb else 0.0,
         "amount_max_bb": float(np.max(action_amounts_bb)) if action_amounts_bb else 0.0,
+        "amount_median_bb": _quantile(action_amounts_bb, 0.50),
+        "amount_p90_bb": _quantile(action_amounts_bb, 0.90),
         "pot_mean_bb": float(np.mean(pot_afters_bb)) if pot_afters_bb else 0.0,
         "pot_max_bb": float(np.max(pot_afters_bb)) if pot_afters_bb else 0.0,
         "amount_to_pot_mean": (
@@ -155,11 +196,24 @@ def _per_hand_summary(hand: Dict[str, Any]) -> Dict[str, Any]:
         "amount_to_pot_std": (
             float(np.std(amount_to_pot_ratios)) if amount_to_pot_ratios else 0.0
         ),
+        "all_in_ratio": _ratio(all_in_actions, total_actions),
+        "fold_to_aggression_ratio": _ratio(
+            action_types.count("fold"),
+            aggressive_actions + 1,
+        ),
+        "actions_per_player": _ratio(total_actions, max(len(players), 1)),
+        "actions_per_street": _ratio(total_actions, max(len(streets), 1)),
+        "action_entropy": _entropy_from_counts(list(action_type_counts.values())),
+        "actor_entropy": _entropy_from_counts(list(actor_counts.values())),
+        "street_entropy": _entropy_from_counts(list(street_counts.values())),
+        "max_action_run_rate": _ratio(max_action_run, total_actions),
+        "max_actor_run_rate": _ratio(max_actor_run, total_actions),
     }
 
-    counts = Counter(action_types)
     for action_type in ACTION_TYPES:
-        summary[f"{action_type}_ratio"] = _ratio(counts[action_type], total_actions)
+        summary[f"{action_type}_ratio"] = _ratio(
+            action_type_counts[action_type], total_actions
+        )
 
     if action_types:
         summary["first_action_type"] = action_types[0]
@@ -203,10 +257,21 @@ def extract_chunk_features(chunk: Sequence[Dict[str, Any]]) -> np.ndarray:
         "amount_mean_bb",
         "amount_std_bb",
         "amount_max_bb",
+        "amount_median_bb",
+        "amount_p90_bb",
         "pot_mean_bb",
         "pot_max_bb",
         "amount_to_pot_mean",
         "amount_to_pot_std",
+        "all_in_ratio",
+        "fold_to_aggression_ratio",
+        "actions_per_player",
+        "actions_per_street",
+        "action_entropy",
+        "actor_entropy",
+        "street_entropy",
+        "max_action_run_rate",
+        "max_actor_run_rate",
     )
 
     features.extend(_mean_std_min_max(player_counts))

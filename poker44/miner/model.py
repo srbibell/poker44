@@ -14,7 +14,7 @@ from typing import Any, Literal, Sequence
 
 import bittensor as bt
 import numpy as np
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 
 from hands_generator.mixed_dataset_provider import (
     MixedDatasetConfig,
@@ -134,6 +134,37 @@ class MinerTrainingConfig:
         )
 
 
+@dataclass
+class WeightedEnsembleModel:
+    """Simple weighted-probability ensemble for sklearn-style classifiers."""
+
+    models: tuple[Any, ...]
+    weights: tuple[float, ...]
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        if not self.models:
+            raise ValueError("Ensemble must contain at least one model")
+        if len(self.models) != len(self.weights):
+            raise ValueError("Ensemble models/weights length mismatch")
+
+        weights = np.asarray(self.weights, dtype=np.float64)
+        weight_sum = float(weights.sum())
+        if weight_sum <= 0.0:
+            weights = np.ones(len(self.models), dtype=np.float64)
+            weight_sum = float(weights.sum())
+        weights = weights / weight_sum
+
+        positive = np.zeros(x.shape[0], dtype=np.float64)
+        for model, weight in zip(self.models, weights):
+            proba = np.asarray(model.predict_proba(x), dtype=np.float64)
+            if proba.ndim != 2 or proba.shape[1] < 2:
+                raise ValueError("Model predict_proba() returned invalid shape")
+            positive += float(weight) * proba[:, 1]
+
+        positive = np.clip(positive, 1e-6, 1.0 - 1e-6)
+        return np.column_stack((1.0 - positive, positive))
+
+
 class MinerRiskModel:
     """Cached local model that scores validator-sanitized hand chunks."""
 
@@ -142,7 +173,7 @@ class MinerRiskModel:
         self._lock = threading.RLock()
         self._training_thread: threading.Thread | None = None
         self._is_training = False
-        self.model: HistGradientBoostingClassifier | None = None
+        self.model: Any | None = None
         self.threshold: float = 0.5
         self.metrics: dict[str, Any] = {}
         self.cache_path = self._cache_path_for_config(self.training_cfg)
@@ -317,7 +348,7 @@ class MinerRiskModel:
         train_x, train_y = self._build_dataset(train_window_ids)
         validation_x, validation_y = self._build_dataset(validation_window_ids)
 
-        model = HistGradientBoostingClassifier(
+        hist_model = HistGradientBoostingClassifier(
             max_depth=5,
             learning_rate=0.05,
             max_iter=350,
@@ -325,33 +356,89 @@ class MinerRiskModel:
             l2_regularization=0.05,
             random_state=self.training_cfg.seed,
         )
-        model.fit(train_x, train_y)
+        hist_model.fit(train_x, train_y)
 
-        validation_probs = model.predict_proba(validation_x)[:, 1]
-        threshold, _ = self._select_threshold(validation_probs, validation_y)
-
-        train_scores = self._remap_scores(
-            model.predict_proba(train_x)[:, 1], threshold
+        rf_model = RandomForestClassifier(
+            n_estimators=220,
+            max_depth=12,
+            min_samples_leaf=4,
+            class_weight="balanced_subsample",
+            random_state=self.training_cfg.seed,
+            n_jobs=-1,
         )
+        rf_model.fit(train_x, train_y)
+
+        ensemble_model = WeightedEnsembleModel(
+            models=(hist_model, rf_model),
+            weights=(0.6, 0.4),
+        )
+
+        candidate_models: dict[str, Any] = {
+            "hist_gradient_boosting": hist_model,
+            "random_forest": rf_model,
+            "weighted_ensemble": ensemble_model,
+        }
+
+        candidate_results: list[dict[str, float | str]] = []
+        best_model_name = "hist_gradient_boosting"
+        best_model: Any = hist_model
+        best_threshold = 0.5
+        best_validation_reward = -1.0
+        best_validation_metrics: dict[str, Any] = {}
+
+        for model_name, candidate_model in candidate_models.items():
+            validation_probs = candidate_model.predict_proba(validation_x)[:, 1]
+            threshold, _ = self._select_threshold(validation_probs, validation_y)
+            remapped_validation_scores = self._remap_scores(validation_probs, threshold)
+            validation_reward, validation_summary = reward(
+                remapped_validation_scores, validation_y
+            )
+            validation_brier = self._brier_score(validation_probs, validation_y)
+            candidate_results.append(
+                {
+                    "model": model_name,
+                    "selected_threshold": round(float(threshold), 6),
+                    "validation_reward": round(float(validation_reward), 6),
+                    "validation_brier": round(float(validation_brier), 6),
+                }
+            )
+            if validation_reward > best_validation_reward:
+                best_validation_reward = float(validation_reward)
+                best_model_name = model_name
+                best_model = candidate_model
+                best_threshold = float(threshold)
+                best_validation_metrics = validation_summary
+
+        candidate_results.sort(
+            key=lambda item: float(item["validation_reward"]), reverse=True
+        )
+
+        train_probs = best_model.predict_proba(train_x)[:, 1]
+        train_scores = self._remap_scores(train_probs, best_threshold)
         train_reward, train_metrics = reward(train_scores, train_y)
+        validation_probs = best_model.predict_proba(validation_x)[:, 1]
         validation_reward, validation_summary = reward(
-            self._remap_scores(validation_probs, threshold),
+            self._remap_scores(validation_probs, best_threshold),
             validation_y,
         )
+        validation_brier = self._brier_score(validation_probs, validation_y)
 
         self.training_cfg.cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "bundle_version": 1,
-            "model": model,
-            "threshold": threshold,
+            "model": best_model,
+            "threshold": best_threshold,
             "metrics": {
                 "status": "trained",
                 "feature_version": FEATURE_VERSION,
+                "selected_model": best_model_name,
+                "candidate_results": candidate_results,
                 "train_reward": train_reward,
                 "train_metrics": train_metrics,
                 "validation_reward": validation_reward,
                 "validation_metrics": validation_summary,
-                "selected_threshold": threshold,
+                "validation_brier": validation_brier,
+                "selected_threshold": best_threshold,
                 "train_examples": int(train_y.size),
                 "validation_examples": int(validation_y.size),
                 "train_window_ids": train_window_ids,
@@ -363,12 +450,13 @@ class MinerRiskModel:
         self.cache_path.write_bytes(pickle.dumps(payload))
 
         with self._lock:
-            self.model = model
-            self.threshold = threshold
+            self.model = best_model
+            self.threshold = best_threshold
             self.metrics = dict(payload["metrics"])
         bt.logging.info(
             "Finished miner model training "
-            f"| reward={validation_reward:.4f} threshold={threshold:.3f} "
+            f"| model={best_model_name} reward={validation_reward:.4f} "
+            f"threshold={best_threshold:.3f} "
             f"cache={self.cache_path}"
         )
 
@@ -425,6 +513,12 @@ class MinerRiskModel:
                 best_metrics = metrics
 
         return best_threshold, best_metrics
+
+    @staticmethod
+    def _brier_score(probabilities: np.ndarray, labels: np.ndarray) -> float:
+        probs = np.asarray(probabilities, dtype=np.float32)
+        y_true = np.asarray(labels, dtype=np.float32)
+        return float(np.mean((probs - y_true) ** 2))
 
     @staticmethod
     def _remap_scores(probabilities: np.ndarray, threshold: float) -> np.ndarray:

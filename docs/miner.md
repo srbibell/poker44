@@ -104,6 +104,8 @@ Operational note:
 
 - on first start, the miner trains a local cached classifier from the bundled
   public human corpus plus generated bot windows;
+- training evaluates multiple model candidates (gradient boosting, random
+  forest, and weighted ensemble) and keeps the best validation-reward scorer;
 - later starts reuse the cached model unless `POKER44_MINER_FORCE_RETRAIN=1`.
 - set `POKER44_MINER_STARTUP_MODE=background` to serve fallback scores
   immediately while local training runs in the background.

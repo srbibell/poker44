@@ -11,6 +11,7 @@ from poker44.miner.model import (
     DEFAULT_HUMAN_JSON_PATH,
     MinerRiskModel,
     MinerTrainingConfig,
+    WeightedEnsembleModel,
     _normalize_startup_mode,
 )
 
@@ -18,6 +19,18 @@ from tests.test_miner_features import make_hand
 
 
 class MinerModelTests(unittest.TestCase):
+    class _DummyModel:
+        def __init__(self, positive_probability: float) -> None:
+            self.positive_probability = float(positive_probability)
+
+        def predict_proba(self, x: np.ndarray) -> np.ndarray:
+            positive = np.full(
+                shape=(x.shape[0],),
+                fill_value=self.positive_probability,
+                dtype=np.float32,
+            )
+            return np.column_stack((1.0 - positive, positive))
+
     def test_startup_mode_normalization(self) -> None:
         self.assertEqual(_normalize_startup_mode("background"), "background")
         self.assertEqual(_normalize_startup_mode("BACKGROUND"), "background")
@@ -103,6 +116,27 @@ class MinerModelTests(unittest.TestCase):
         self.assertGreaterEqual(bot_score, 0.0)
         self.assertLessEqual(bot_score, 1.0)
         self.assertGreater(bot_score, human_score)
+
+    def test_weighted_ensemble_predict_proba(self) -> None:
+        x = np.zeros((5, 4), dtype=np.float32)
+        ensemble = WeightedEnsembleModel(
+            models=(self._DummyModel(0.2), self._DummyModel(0.8)),
+            weights=(0.75, 0.25),
+        )
+        proba = ensemble.predict_proba(x)
+
+        expected_positive = 0.75 * 0.2 + 0.25 * 0.8
+        self.assertEqual(proba.shape, (5, 2))
+        self.assertTrue(np.allclose(proba[:, 1], expected_positive))
+        self.assertTrue(np.allclose(proba.sum(axis=1), 1.0))
+
+    def test_brier_score_is_zero_for_perfect_probabilities(self) -> None:
+        probabilities = np.asarray([0.0, 1.0], dtype=np.float32)
+        labels = np.asarray([False, True], dtype=bool)
+        self.assertAlmostEqual(
+            MinerRiskModel._brier_score(probabilities, labels),
+            0.0,
+        )
 
 
 if __name__ == "__main__":
