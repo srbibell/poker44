@@ -21,7 +21,13 @@ Run these checks for most code changes:
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
-python -m py_compile neurons/miner.py neurons/validator.py
+python -m py_compile $(git ls-files '*.py')
+```
+
+Or run the project helper:
+
+```bash
+./scripts/dev/run_checks.sh
 ```
 
 If your change touches hand parsing or dataset generation, also run:
@@ -47,6 +53,12 @@ POKER44_MINER_CHUNK_COUNT=20 \
 POKER44_MINER_BOT_CANDIDATE_ATTEMPTS=2 \
 POKER44_MINER_MAX_BOT_GENERATION_ROUNDS=1 \
 python scripts/miner/evaluate_miner.py --windows 1
+```
+
+To run unit/syntax checks plus this fast miner benchmark in one command:
+
+```bash
+./scripts/dev/run_checks.sh --with-miner-benchmark
 ```
 
 ## Validator Notes

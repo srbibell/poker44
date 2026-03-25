@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 from poker44 import __version__
 from poker44.base.validator import BaseValidatorNeuron
 from poker44.utils.config import config
+from poker44.utils.env import env_float, env_int, env_optional_int
 from poker44.validator.forward import forward as forward_cycle
 from hands_generator.mixed_dataset_provider import (
     DEFAULT_OUTPUT_PATH,
@@ -64,15 +65,41 @@ class Validator(BaseValidatorNeuron):
         mixed_output_path = Path(
             os.getenv("POKER44_MIXED_DATASET_PATH", str(DEFAULT_OUTPUT_PATH))
         ).expanduser().resolve()
-        refresh_seconds = int(
-            os.getenv("POKER44_DATASET_REFRESH_SECONDS", str(60 * 60))
+        refresh_seconds = env_int(
+            "POKER44_DATASET_REFRESH_SECONDS",
+            60 * 60,
+            minimum=60,
+            logger=bt.logging.warning,
         )
-        chunk_count = int(os.getenv("POKER44_CHUNK_COUNT", "40"))
-        min_hands_per_chunk = int(os.getenv("POKER44_MIN_HANDS_PER_CHUNK", "60"))
-        max_hands_per_chunk = int(os.getenv("POKER44_MAX_HANDS_PER_CHUNK", "120"))
-        human_ratio = float(os.getenv("POKER44_HUMAN_RATIO", "0.5"))
-        dataset_seed_env = os.getenv("POKER44_DATASET_SEED")
-        dataset_seed = int(dataset_seed_env) if dataset_seed_env is not None else None
+        chunk_count = env_int(
+            "POKER44_CHUNK_COUNT",
+            40,
+            minimum=8,
+            logger=bt.logging.warning,
+        )
+        min_hands_per_chunk = env_int(
+            "POKER44_MIN_HANDS_PER_CHUNK",
+            60,
+            minimum=10,
+            logger=bt.logging.warning,
+        )
+        max_hands_per_chunk = env_int(
+            "POKER44_MAX_HANDS_PER_CHUNK",
+            120,
+            minimum=min_hands_per_chunk,
+            logger=bt.logging.warning,
+        )
+        human_ratio = env_float(
+            "POKER44_HUMAN_RATIO",
+            0.5,
+            minimum=0.1,
+            maximum=0.9,
+            logger=bt.logging.warning,
+        )
+        dataset_seed = env_optional_int(
+            "POKER44_DATASET_SEED",
+            logger=bt.logging.warning,
+        )
         self.chunk_batch_size = chunk_count
         self.dataset_cfg = MixedDatasetConfig(
             human_json_path=human_json_path,
@@ -92,10 +119,18 @@ class Validator(BaseValidatorNeuron):
         )
         bt.logging.info("🧭 Dataset generation is deterministic per refresh window.")
         configured_poll_interval = getattr(cfg, "poll_interval_seconds", refresh_seconds)
-        self.poll_interval = int(
-            os.getenv("POKER44_POLL_INTERVAL_SECONDS", str(configured_poll_interval))
+        self.poll_interval = env_int(
+            "POKER44_POLL_INTERVAL_SECONDS",
+            int(configured_poll_interval),
+            minimum=1,
+            logger=bt.logging.warning,
         )
-        self.reward_window = int(os.getenv("POKER44_REWARD_WINDOW", "40"))
+        self.reward_window = env_int(
+            "POKER44_REWARD_WINDOW",
+            40,
+            minimum=1,
+            logger=bt.logging.warning,
+        )
         self.prediction_buffer = {}
         self.label_buffer = {}
 

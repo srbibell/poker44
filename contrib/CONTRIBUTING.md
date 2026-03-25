@@ -24,13 +24,15 @@ Use the following default process when contributing to Poker44:
 3. Branch from `staging` using the naming conventions in
    [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md).
 4. Install the project locally and run the relevant checks from
-   [TESTING.md](./TESTING.md) before opening a PR.
+   [TESTING.md](./TESTING.md) before opening a PR (for most changes:
+   `./scripts/dev/run_checks.sh`).
 5. Keep the change focused. Avoid mixing feature work, refactoring, and
    unrelated fixes in the same PR.
 6. Update documentation when behavior changes, especially miner or validator
    runtime behavior.
-7. Open the PR against `staging`, respond to review comments promptly, and
-   keep the branch current with upstream changes.
+7. Open the PR against `staging` (or the repo's default integration branch if
+   `staging` is not used), respond to review comments promptly, and keep the
+   branch current with upstream changes.
 
 ## Communication Channels
 Use these channels by default:

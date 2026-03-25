@@ -31,6 +31,10 @@ Bittensor's codebase consists of two main branches: **main** and **staging**.
 **staging**
 - This branch is continuously updated and is where you propose and merge changes. It's essentially Bittensor's active development branch.
 
+> Repository variants: some subnet repos do not maintain a dedicated
+> `staging` branch. In that case, treat the default integration branch
+> (typically `main`) as the `staging` equivalent in the workflow below.
+
 ## Development Model
 
 ### Feature Branches
